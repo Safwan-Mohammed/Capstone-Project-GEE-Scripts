@@ -1,49 +1,41 @@
 //Import the Region
 
-var wrapper = require('users/adugnagirma/gee_s1_ard:wrapper');
-var helper = require('users/adugnagirma/gee_s1_ard:utilities');
-
 //Make sure to change the file names for every download
 
 var fileId = 'projects/wise-scene-427306-q3/assets/Sentinel-1/2018/Processed_S1_Tumkur_July_2018';
 var description = 'Processed_S1_Tumkur_July_2018';
 
 // Define Parameters
-var parameter = {
-    START_DATE: '2018-07-01',
-    STOP_DATE: '2018-07-30',
-    POLARIZATION: 'VVVH',
-    GEOMETRY: region,
-    ORBIT: 'BOTH',
-    APPLY_ADDITIONAL_BORDER_NOISE_CORRECTION: true,
-    APPLY_SPECKLE_FILTERING: true,
-    SPECKLE_FILTER_FRAMEWORK: 'MULTI',
-    SPECKLE_FILTER: 'REFINED LEE',
-    SPECKLE_FILTER_KERNEL_SIZE: 15,
-    SPECKLE_FILTER_NR_OF_IMAGES: 10,
-    APPLY_TERRAIN_FLATTENING: true,
-    DEM: ee.Image('USGS/SRTMGL1_003'),
-    TERRAIN_FLATTENING_MODEL: 'VOLUME',
-    TERRAIN_FLATTENING_ADDITIONAL_LAYOVER_SHADOW_BUFFER: 0,
-    FORMAT: 'DB',
-    CLIP_TO_ROI: true,
-    SAVE_ASSETS: false
+var AOI = region;
+var START_DATE = '2022-12-01';
+var END_DATE = '2022-12-30';
+
+var s1 = ee.ImageCollection('COPERNICUS/S1_GRD_FLOAT').filter(ee.Filter.eq('instrumentMode', 'IW')).filter(ee.Filter.eq('resolution_meters', 10)).filterDate(START_DATE, END_DATE).filterBounds(AOI);
+
+var add_vh_vv_ratio = function(image) {
+  var vh_vv_ratio = image.expression('VH / VV', {'VH': image.select('VH'), 'VV': image.select('VV')}).rename('VH_VV_ratio');
+  return image.addBands(vh_vv_ratio);
 };
 
-var s1_preprocces = wrapper.s1_preproc(parameter);
-var s1 = s1_preprocces[0]
-s1_preprocces = s1_preprocces[1]
+var convert_to_db = function(image) {
+  var vh_db = image.select('VH').log10().multiply(10).rename('VH_dB');
+  var vv_db = image.select('VV').log10().multiply(10).rename('VV_dB');
+  var vh_vv_db = image.select('VH_VV_ratio').log10().multiply(10).rename('VH_VV_dB');
+  return image.addBands([vh_db, vv_db, vh_vv_db]);
+};
 
-var visparam = {};
-var s1_preprocces_view = s1_preprocces.map(function(image) { 
-    return image.addBands(image.expression('VH / VV', { 'VH': image.select('VH'), 'VV': image.select('VV') }).rename('VH_VV_ratio')); 
-}).map(helper.lin_to_db2);
+var s1_with_ratio = s1.map(add_vh_vv_ratio);
+var s1_median = s1_with_ratio.median().clip(AOI);
+var s1_median_db = convert_to_db(s1_median);
 
-var s1_view = s1.map(function(image) { 
-    return image.addBands(image.expression('VH / VV', { 'VH': image.select('VH'), 'VV': image.select('VV') }).rename('VH_VV_ratio')); 
-}).map(helper.lin_to_db2);
+var visParams = {
+  bands: ['VV_dB', 'VH_dB', 'VH_VV_dB'],
+  min: [-20, -25, -10],
+  max: [0, -5, 10],
+};
 
-visparam = {bands:['VV','VH','VH_VV_ratio'],min: [-20, -25, 1],max: [0, -5, 15]}
+Map.centerObject(region, 12);
+Map.addLayer(s1_median_db, visParams, 'Sentinel-1 dB Composite');
 
 // Export.image.toAsset({
 //   image: s1_preprocces_view.median().clip(parameter.GEOMETRY),
@@ -53,8 +45,3 @@ visparam = {bands:['VV','VH','VH_VV_ratio'],min: [-20, -25, 1],max: [0, -5, 15]}
 //   region: parameter.GEOMETRY,
 //   maxPixels: 1e13
 // });
-
-
-Map.centerObject(region, 12);
-// // Map.addLayer(s1_view.median(), visparam, 'First image in the input S1 collection', true);
-Map.addLayer(s1_preprocces_view.median(), visparam, 'First image in the processed S1 collection', true);
